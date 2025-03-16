@@ -1,4 +1,4 @@
-// Client for decryption server, from enc_client.c
+// Client for decryption server
 // Uses same socket structure, but sends ciphertext instead of plaintext
 // Source: Beej’s Guide to Network Programming - https://beej.us/guide/bgnet/
 
@@ -12,13 +12,11 @@
 
 #define BUFFER_SIZE 1024
 
-// Error function 
 void error(const char *msg) {
     perror(msg);
     exit(1);
 }
 
-// Set up the server address struct
 void setupAddressStruct(struct sockaddr_in* address, int portNumber, char* hostname) {
     memset((char*) address, '\0', sizeof(*address));
     address->sin_family = AF_INET;
@@ -42,31 +40,27 @@ int main(int argc, char *argv[]) {
     int portNumber = atoi(argv[3]);
     char ciphertext[BUFFER_SIZE], key[BUFFER_SIZE], plaintext[BUFFER_SIZE];
 
-    // Read ciphertext from file
     FILE *fp = fopen(ciphertextFile, "r");
     if (fp == NULL) {
         error("Error opening ciphertext file");
     }
     fgets(ciphertext, BUFFER_SIZE - 1, fp);
     fclose(fp);
-    ciphertext[strcspn(ciphertext, "\n")] = '\0';  // Remove newline
+    ciphertext[strcspn(ciphertext, "\n")] = '\0';  
 
-    // Read key from file
     fp = fopen(keyFile, "r");
     if (fp == NULL) {
         error("Error opening key file");
     }
     fgets(key, BUFFER_SIZE - 1, fp);
     fclose(fp);
-    key[strcspn(key, "\n")] = '\0';  // Remove newline
+    key[strcspn(key, "\n")] = '\0';  
 
-    // Check if key is long enough
     if (strlen(key) < strlen(ciphertext)) {
         fprintf(stderr, "Error: key is too short\n");
         exit(1);
     }
 
-    // Set up the server connection
     int socketFD = socket(AF_INET, SOCK_STREAM, 0);
     if (socketFD < 0) {
         error("CLIENT: ERROR opening socket");
@@ -79,20 +73,26 @@ int main(int argc, char *argv[]) {
         error("CLIENT: ERROR connecting to decryption server");
     }
 
+    // Send client identifier
+    send(socketFD, "dec_client\n", 11, 0);
+    
     // Send ciphertext
     send(socketFD, ciphertext, strlen(ciphertext), 0);
     send(socketFD, "\n", 1, 0);
-
+    usleep(50000); // Small delay
+    
     // Send key
     send(socketFD, key, strlen(key), 0);
     send(socketFD, "\n", 1, 0);
+    usleep(50000);
 
     printf("CLIENT: Ciphertext and key sent. Waiting for response...\n");
     fflush(stdout);
 
-    // Receive plaintext
     memset(plaintext, '\0', BUFFER_SIZE);
-    recv(socketFD, plaintext, BUFFER_SIZE - 1, 0);
+    if (recv(socketFD, plaintext, BUFFER_SIZE - 1, 0) < 0) {
+        error("CLIENT: ERROR receiving plaintext");
+    }
 
     printf("CLIENT: Received plaintext: %s\n", plaintext);
     printf("%s\n", plaintext);

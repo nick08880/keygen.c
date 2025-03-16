@@ -10,17 +10,16 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/wait.h>
 
 #define BUFFER_SIZE 1024
-#define ALPHABET_SIZE 27  // 26 letters + space
+#define ALPHABET_SIZE 27  
 
-// Error function
 void error(const char *msg) {
     perror(msg);
     exit(1);
 }
 
-// Set up the server address struct
 void setupAddressStruct(struct sockaddr_in* address, int portNumber) {
     memset((char*) address, '\0', sizeof(*address)); 
     address->sin_family = AF_INET;
@@ -28,22 +27,56 @@ void setupAddressStruct(struct sockaddr_in* address, int portNumber) {
     address->sin_addr.s_addr = INADDR_ANY;
 }
 
-// Decrypt ciphertext using modulo 27 subtraction
 void decryptText(char *ciphertext, char *key, char *plaintext) {
     printf("SERVER: Decrypting data...\n");
     fflush(stdout);
 
-    for (size_t i = 0; i < strlen(ciphertext); i++) {
+    size_t textLen = strlen(ciphertext);
+    for (size_t i = 0; i < textLen; i++) {
+        if (ciphertext[i] == '\0' || key[i] == '\0') break;
         int cipherIndex = (ciphertext[i] == ' ') ? 26 : ciphertext[i] - 'A';
         int keyIndex = (key[i] == ' ') ? 26 : key[i] - 'A';
-        int plainIndex = (cipherIndex - keyIndex + ALPHABET_SIZE) % ALPHABET_SIZE; // Ensure non-negative
-
+        int plainIndex = (cipherIndex - keyIndex + ALPHABET_SIZE) % ALPHABET_SIZE; 
         plaintext[i] = (plainIndex == 26) ? ' ' : 'A' + plainIndex;
     }
-    plaintext[strlen(ciphertext)] = '\0';
-
+    plaintext[textLen] = '\0';
     printf("SERVER: Decryption complete. Plaintext: %s\n", plaintext);
     fflush(stdout);
+}
+
+void handleClient(int connectionSocket) {
+    char ciphertext[BUFFER_SIZE], key[BUFFER_SIZE], plaintext[BUFFER_SIZE];
+    memset(ciphertext, '\0', BUFFER_SIZE);
+    memset(key, '\0', BUFFER_SIZE);
+    memset(plaintext, '\0', BUFFER_SIZE);
+
+    ssize_t bytesReceived = recv(connectionSocket, ciphertext, BUFFER_SIZE - 1, 0);
+    if (bytesReceived < 0) {
+        error("SERVER: ERROR receiving ciphertext");
+    }
+    ciphertext[strcspn(ciphertext, "\n")] = '\0';
+    printf("SERVER: Received ciphertext: %s\n", ciphertext);
+    fflush(stdout);
+
+    bytesReceived = recv(connectionSocket, key, BUFFER_SIZE - 1, 0);
+    if (bytesReceived < 0) {
+        error("SERVER: ERROR receiving key");
+    }
+    key[strcspn(key, "\n")] = '\0';
+    printf("SERVER: Received key: %s\n", key);
+    fflush(stdout);
+
+    decryptText(ciphertext, key, plaintext);
+
+    ssize_t bytesSent = send(connectionSocket, plaintext, strlen(plaintext), 0);
+    if (bytesSent < 0) {
+        error("SERVER: ERROR sending plaintext");
+    }
+    printf("SERVER: Sent plaintext: %s\n", plaintext);
+    fflush(stdout);
+
+    close(connectionSocket);
+    exit(0);
 }
 
 int main(int argc, char *argv[]) {
@@ -84,45 +117,16 @@ int main(int argc, char *argv[]) {
         fflush(stdout);
 
         pid_t pid = fork();
-        if (pid == 0) {  // Child process
+        if (pid == 0) {  
             close(listenSocket);
-            char ciphertext[BUFFER_SIZE], key[BUFFER_SIZE], plaintext[BUFFER_SIZE];
-
-            memset(ciphertext, '\0', BUFFER_SIZE);
-            memset(key, '\0', BUFFER_SIZE);
-            memset(plaintext, '\0', BUFFER_SIZE);
-
-            // Read ciphertext
-            if (recv(connectionSocket, ciphertext, BUFFER_SIZE - 1, 0) < 0) {
-                error("SERVER: ERROR receiving ciphertext");
-            }
-            ciphertext[strcspn(ciphertext, "\n")] = '\0';  // Remove newline
-            printf("SERVER: Received ciphertext: %s\n", ciphertext);
-            fflush(stdout);
-
-            // Read key
-            if (recv(connectionSocket, key, BUFFER_SIZE - 1, 0) < 0) {
-                error("SERVER: ERROR receiving key");
-            }
-            key[strcspn(key, "\n")] = '\0';  // Remove newline
-            printf("SERVER: Received key: %s\n", key);
-            fflush(stdout);
-
-            // Decrypt message
-            decryptText(ciphertext, key, plaintext);
-
-            // Send plaintext back to client
-            send(connectionSocket, plaintext, strlen(plaintext), 0);
-            printf("SERVER: Sent plaintext: %s\n", plaintext);
-            fflush(stdout);
-
+            handleClient(connectionSocket);
+        } else if (pid > 0) {
             close(connectionSocket);
-            exit(0);
+            while (waitpid(-1, NULL, WNOHANG) > 0);
         } else {
-            close(connectionSocket);
+            error("ERROR on fork");
         }
     }
-
     close(listenSocket);
     return 0;
 }
