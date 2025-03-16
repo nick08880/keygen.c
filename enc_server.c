@@ -1,5 +1,6 @@
 // handling multiple clients with fork() implementation source: https://www.geeksforgeeks.org/fork-system-call/
-// Blind socket to an ip address and port source : https://www.linuxhowtos.org/C_C++/socket.htm 
+// Bind socket to an IP address and port source: https://www.linuxhowtos.org/C_C++/socket.htm 
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,7 +13,7 @@
 #define ALPHABET "ABCDEFGHIJKLMNOPQRSTUVWXYZ "  // Allowed characters
 #define ALPHABET_SIZE 27  // 26 letters + space
 
-// Error function=
+// Error function
 void error(const char *msg) {
     perror(msg);
     exit(1);
@@ -26,8 +27,11 @@ void setupAddressStruct(struct sockaddr_in* address, int portNumber) {
     address->sin_addr.s_addr = INADDR_ANY;
 }
 
-// Encrypt plaintext (mod 27)
+// Encrypt plaintext using one-time pad method (mod 27)
 void encryptText(char *plaintext, char *key, char *ciphertext) {
+    printf("SERVER: Encrypting data...\n");
+    fflush(stdout);
+    
     for (size_t i = 0; i < strlen(plaintext); i++) {
         int ptIndex = (plaintext[i] == ' ') ? 26 : plaintext[i] - 'A';
         int keyIndex = (key[i] == ' ') ? 26 : key[i] - 'A';
@@ -35,6 +39,9 @@ void encryptText(char *plaintext, char *key, char *ciphertext) {
         ciphertext[i] = (cipherIndex == 26) ? ' ' : 'A' + cipherIndex;
     }
     ciphertext[strlen(plaintext)] = '\0';
+
+    printf("SERVER: Encryption complete. Ciphertext: %s\n", ciphertext);
+    fflush(stdout);
 }
 
 int main(int argc, char *argv[]) {
@@ -69,6 +76,9 @@ int main(int argc, char *argv[]) {
             error("ERROR on accept");
         }
         
+        printf("SERVER: Connection accepted from a client!\n");
+        fflush(stdout);
+
         pid_t pid = fork();
         if (pid == 0) {  // Child process
             close(listenSocket);
@@ -77,18 +87,57 @@ int main(int argc, char *argv[]) {
             memset(key, '\0', BUFFER_SIZE);
             memset(ciphertext, '\0', BUFFER_SIZE);
             
-            read(connectionSocket, plaintext, BUFFER_SIZE - 1);
-            read(connectionSocket, key, BUFFER_SIZE - 1);
-            
+            // Open socket stream
+            FILE *socketStream = fdopen(connectionSocket, "r");
+            if (socketStream == NULL) {
+                perror("SERVER: ERROR opening socket stream");
+                close(connectionSocket);
+                exit(1);
+            }
+
+            // Read plaintext from client
+            printf("SERVER: Waiting for plaintext...\n");
+            fflush(stdout);
+            if (fgets(plaintext, BUFFER_SIZE, socketStream) == NULL) {
+                perror("SERVER: ERROR reading plaintext");
+                close(connectionSocket);
+                exit(1);
+            }
+            plaintext[strcspn(plaintext, "\n")] = '\0';  // Remove newline
+            printf("SERVER: Received plaintext: %s\n", plaintext);
+            fflush(stdout);
+
+            // Read key from client
+            printf("SERVER: Waiting for key...\n");
+            fflush(stdout);
+            if (fgets(key, BUFFER_SIZE, socketStream) == NULL) {
+                perror("SERVER: ERROR reading key");
+                close(connectionSocket);
+                exit(1);
+            }
+            key[strcspn(key, "\n")] = '\0';  // Remove newline
+            printf("SERVER: Received key: %s\n", key);
+            fflush(stdout);
+
+            // Encrypt the message
             encryptText(plaintext, key, ciphertext);
-            write(connectionSocket, ciphertext, strlen(ciphertext));
-            
+
+            // Send ciphertext back to client
+            ssize_t bytesWritten = write(connectionSocket, ciphertext, strlen(ciphertext));
+            if (bytesWritten < 0) {
+                perror("SERVER: ERROR writing ciphertext");
+            } else {
+                printf("SERVER: Ciphertext sent successfully! (%ld bytes)\n", bytesWritten);
+                fflush(stdout);
+            }
+
             close(connectionSocket);
             exit(0);
         } else {
             close(connectionSocket);
         }
     }
+
     close(listenSocket);
     return 0;
 }
